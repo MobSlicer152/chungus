@@ -1,18 +1,4 @@
-#ifdef _M_AMD64
-#define _AMD64_ 1
-#else // if defined(_M_IX86)
-#error nah
-// #define _X86_ 1
-#endif
-
-#include <minwindef.h>
-#include <ntstatus.h>
-#include <winnt.h>
-#include <winternl.h>
-
-#include <vcruntime.h>
-
-#include "cdecode.h"
+#pragma region Settings
 
 #define PAYLOAD_OUT_NAME L"chungus_"
 #define PAYLOAD_OUT_EXTENSION L".jpg"
@@ -22,6 +8,27 @@
 #else
 #define PAYLOAD_OUT_COUNT 69420
 #endif
+
+#pragma endregion
+
+#ifdef _M_AMD64
+#define _AMD64_ 1
+#elif defined(_M_IX86)
+// #error nah
+#define _X86_ 1
+#endif
+
+#include <minwindef.h>
+#include <ntstatus.h>
+#include <winnt.h>
+#include <winternl.h>
+
+#include <vcruntime.h>
+
+#pragma function(memcmp)
+#pragma function(strlen)
+
+#include "cdecode.h"
 
 static BYTE* g_bigChungus;
 const size_t BIG_CHUNGUS_SIZE;
@@ -66,13 +73,18 @@ PFN_NtWriteFile NtWriteFile;
 
 #ifdef _DEBUG
 typedef void (*PFN_DbgPrint)(PCHAR Format, ...);
-PFN_DbgPrint DbgPrint;
+PFN_DbgPrint _DbgPrint;
+#define DbgPrint(...) (_DbgPrint) ? _DbgPrint(__VA_ARGS__) : 0
 #else
 #define DbgPrint(...)
 #endif
 
 typedef NTSTATUS(NTAPI* PFN_NtClose)(HANDLE Handle);
 PFN_NtClose _NtClose;
+
+typedef VOID(NTAPI* PFN_RtlInitUnicodeString)(PUNICODE_STRING DestinationString,
+                                              PCWSTR SourceString);
+PFN_RtlInitUnicodeString _RtlInitUnicodeString;
 
 typedef int (*PFN_snprintf)(wchar_t* buffer, size_t n, const wchar_t* fmt, ...);
 PFN_snprintf _snwprintf;
@@ -100,14 +112,14 @@ int mainCRTStartup(void)
     status = LoadFunctions(ntdll);
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("LoadFunctions failed: NTSTATUS 0x%lX\n", status);
+        DbgPrint("LoadFunctions failed: NTSTATUS 0x%08lX\n", status);
         return status;
     }
 
     status = DecodePayload();
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("DecodePayload failed: NTSTATUS 0x%lX\n", status);
+        DbgPrint("DecodePayload failed: NTSTATUS 0x%08lX\n", status);
         return status;
     }
 
@@ -122,13 +134,13 @@ int mainCRTStartup(void)
         status = WritePayload(peb, count + 1);
         if (!NT_SUCCESS(status))
         {
-            DbgPrint("WritePayload failed: NTSTATUS 0x%lX\n", status);
+            DbgPrint("WritePayload failed: NTSTATUS 0x%08lX\n", status);
             break;
         }
         count++;
     }
 
-    DbgPrint("Wrote %zu payloads, total %zu bytes\n", count,
+    DbgPrint("Wrote %zu payloads, total ~%zu bytes\n", count,
              count * PAYLOAD_OUT_SIZE);
 
     _memset(g_decodedChungus, 0, g_decodedChungusSize);
@@ -162,26 +174,6 @@ size_t strlen(const char* str)
     }
 
     return length;
-}
-
-void _RTC_InitBase(void)
-{
-}
-void _RTC_Shutdown(void)
-{
-}
-void _RTC_CheckStackVars(void)
-{
-}
-void _RTC_UninitUse(void)
-{
-}
-void __GSHandlerCheck(void)
-{
-}
-uintptr_t __security_cookie;
-void __security_check_cookie(uintptr_t cookie)
-{
 }
 
 #pragma endregion
@@ -236,15 +228,12 @@ NTSTATUS FindSymbol(PVOID base, PANSI_STRING name, PVOID* symbol)
         return status;
     }
 
-    if (DbgPrint)
-    {
-        DbgPrint("Locating symbol %Z in DLL mapped at 0x%llX\n", name, base);
-    }
+    DbgPrint("Locating symbol %Z in DLL mapped at 0x%llX\n", name, base);
 
     PBYTE ntdllBase = base;
     PIMAGE_DOS_HEADER dosHeader = base;
-    PIMAGE_NT_HEADERS64 ntHeaders =
-        (PIMAGE_NT_HEADERS64)(ntdllBase + dosHeader->e_lfanew);
+    PIMAGE_NT_HEADERS ntHeaders =
+        (PIMAGE_NT_HEADERS)(ntdllBase + dosHeader->e_lfanew);
     PIMAGE_EXPORT_DIRECTORY edt =
         (PIMAGE_EXPORT_DIRECTORY)(ntdllBase +
                                   ntHeaders->OptionalHeader
@@ -280,17 +269,11 @@ NTSTATUS FindSymbol(PVOID base, PANSI_STRING name, PVOID* symbol)
     {
         DWORD rva = exportAddresses[ordinal];
         *symbol = (ntdllBase + rva);
-        if (DbgPrint)
-        {
-            DbgPrint("Located symbol %Z at 0x%llX\n", name, *symbol);
-        }
+        DbgPrint("Located symbol %Z at 0x%llX\n", name, *symbol);
         return STATUS_SUCCESS;
     }
 
-    if (DbgPrint)
-    {
-        DbgPrint("Failed to locate symbol %Z\n", name);
-    }
+    DbgPrint("Failed to locate symbol %Z\n", name);
 
     return STATUS_ENTRYPOINT_NOT_FOUND;
 }
@@ -301,7 +284,7 @@ NTSTATUS LoadFunctions(PVOID ntdll)
 
 #ifdef _DEBUG
     status = FindSymbol(ntdll, &(ANSI_STRING)RTL_CONSTANT_STRING("DbgPrint"),
-                        &(PVOID)DbgPrint);
+                        &(PVOID)_DbgPrint);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -327,6 +310,14 @@ NTSTATUS LoadFunctions(PVOID ntdll)
 
     status = FindSymbol(ntdll, &(ANSI_STRING)RTL_CONSTANT_STRING("NtClose"),
                         &(PVOID)_NtClose);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = FindSymbol(
+        ntdll, &(ANSI_STRING)RTL_CONSTANT_STRING("RtlInitUnicodeString"),
+        &(PVOID)_RtlInitUnicodeString);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -366,8 +357,8 @@ NTSTATUS DecodePayload(void)
         g_bigChungus, (const int)BIG_CHUNGUS_SIZE, g_decodedChungus, &state);
     if (g_decodedChungusSize != PAYLOAD_OUT_SIZE)
     {
-        DbgPrint("Decoded size is %zu byte(s), expected %zu byte(s)\n", g_decodedChungusSize,
-                 PAYLOAD_OUT_SIZE);
+        DbgPrint("Decoded size is %zu byte(s), expected %zu byte(s)\n",
+                 g_decodedChungusSize, PAYLOAD_OUT_SIZE);
         return STATUS_BAD_DATA;
     }
 
@@ -382,32 +373,43 @@ NTSTATUS WritePayload(PPEB peb, size_t number)
     PUNICODE_STRING imagePath = &peb->ProcessParameters->ImagePathName;
     size_t offset = _wcsrchr(imagePath->Buffer, L'\\') - imagePath->Buffer;
     _snwprintf(buffer, __crt_countof(buffer),
-               L"\\DosDevices\\%.*"
+               L"\\??\\%.*"
                L"s\\" PAYLOAD_OUT_NAME L"%020zu" PAYLOAD_OUT_EXTENSION,
                offset, imagePath->Buffer, number);
+
+    UNICODE_STRING outputFile = {0};
+    _RtlInitUnicodeString(&outputFile, buffer);
 
     DbgPrint("Writing payload %zu to %ws\n", number, buffer);
 
     HANDLE handle = NULL;
     OBJECT_ATTRIBUTES attributes = {0};
-    InitializeObjectAttributes(&attributes,
-                               &(UNICODE_STRING)RTL_CONSTANT_STRING(buffer),
-                               OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&attributes, &outputFile, OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
     IO_STATUS_BLOCK ioStatus = {0};
-    NTSTATUS status = _NtCreateFile(
-        &handle, GENERIC_WRITE | FILE_WRITE_DATA | SYNCHRONIZE, &attributes,
-        &ioStatus, NULL, FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_READONLY, 0,
-        FILE_SUPERSEDE, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+    NTSTATUS status =
+        _NtCreateFile(&handle, GENERIC_WRITE | FILE_WRITE_DATA, &attributes,
+                      &ioStatus, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE,
+                      FILE_SUPERSEDE, FILE_WRITE_THROUGH, NULL, 0);
     if (!NT_SUCCESS(status))
     {
+        DbgPrint("NtCreateFile failed: NTSTATUS 0x%08lX\n", status);
         return status;
     }
 
     _memset(&ioStatus, 0, sizeof(IO_STATUS_BLOCK));
+    LARGE_INTEGER byteOffset = {0};
     status = NtWriteFile(handle, NULL, NULL, NULL, &ioStatus, g_decodedChungus,
-                         (ULONG)g_decodedChungusSize, NULL, NULL);
-
-    DbgPrint("Wrote %zu bytes\n", ioStatus.Information);
+                         (ULONG)g_decodedChungusSize, &byteOffset, NULL);
+    if (!NT_SUCCESS(status) || ioStatus.Information < g_decodedChungusSize)
+    {
+        DbgPrint("NtWriteFile failed: NTSTATUS 0x%08lX, %zu/%zu bytes written\n",
+                 status, ioStatus.Information, g_decodedChungusSize);
+    }
+    else
+    {
+        DbgPrint("Wrote %zu bytes\n", ioStatus.Information);
+    }
 
     _NtClose(handle);
     return status;
