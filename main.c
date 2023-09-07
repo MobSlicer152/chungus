@@ -387,10 +387,10 @@ NTSTATUS WritePayload(PPEB peb, size_t number)
     InitializeObjectAttributes(&attributes, &outputFile, OBJ_CASE_INSENSITIVE,
                                NULL, NULL);
     IO_STATUS_BLOCK ioStatus = {0};
-    NTSTATUS status =
-        _NtCreateFile(&handle, GENERIC_WRITE | FILE_WRITE_DATA, &attributes,
-                      &ioStatus, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE,
-                      FILE_SUPERSEDE, FILE_WRITE_THROUGH, NULL, 0);
+    NTSTATUS status = _NtCreateFile(
+        &handle, GENERIC_WRITE | FILE_WRITE_DATA | SYNCHRONIZE, &attributes,
+        &ioStatus, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE,
+        FILE_SUPERSEDE, FILE_WRITE_THROUGH, NULL, 0);
     if (!NT_SUCCESS(status))
     {
         DbgPrint("NtCreateFile failed: NTSTATUS 0x%08lX\n", status);
@@ -403,8 +403,9 @@ NTSTATUS WritePayload(PPEB peb, size_t number)
                          (ULONG)g_decodedChungusSize, &byteOffset, NULL);
     if (!NT_SUCCESS(status) || ioStatus.Information < g_decodedChungusSize)
     {
-        DbgPrint("NtWriteFile failed: NTSTATUS 0x%08lX, %zu/%zu bytes written\n",
-                 status, ioStatus.Information, g_decodedChungusSize);
+        DbgPrint(
+            "NtWriteFile failed: NTSTATUS 0x%08lX, %zu/%zu bytes written\n",
+            status, ioStatus.Information, g_decodedChungusSize);
     }
     else
     {
